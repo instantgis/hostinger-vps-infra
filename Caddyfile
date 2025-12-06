@@ -76,7 +76,8 @@ rules.instantgis.cloud {
 
 # Root domain health check
 instantgis.cloud {
-    respond "AutoLift is running on instantgis.cloud" 200
+    respond "AutoLift infra via hostinger-vps-infra" 200
 }
+
 
 
