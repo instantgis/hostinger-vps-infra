@@ -1,4 +1,4 @@
-# Caddy reverse proxy configuration for AutoLift
+﻿# Caddy reverse proxy configuration for AutoLift
 # Auto-generated from template - DO NOT EDIT MANUALLY
 # Domain: instantgis.cloud
 
@@ -36,20 +36,6 @@ supabase.instantgis.cloud {
     reverse_proxy kong:8000
 }
 
-# Supabase Studio - protected with basic auth
-studio.instantgis.cloud {
-    basic_auth {
-        {{DASHBOARD_USERNAME}} {{DASHBOARD_PASSWORD_HASH}}
-    }
-    reverse_proxy supabase-studio:3000
-    encode gzip zstd
-    header {
-        -Server
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-    }
-}
-
 # Frontend - Angular booking app
 booking.instantgis.cloud {
     reverse_proxy booking:80
@@ -78,5 +64,4 @@ rules.instantgis.cloud {
 instantgis.cloud {
     respond "AutoLift is running on instantgis.cloud" 200
 }
-
 
