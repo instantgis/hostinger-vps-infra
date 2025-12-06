@@ -262,3 +262,80 @@ When in doubt, open both files side by side (`instantgis.cloud.env` and `.env`)
 and use this table as a checklist: every non-`CHANGE_ME_*` value in `.env` must
 come from this mapping.
 
+
+
+## 10. Triplit Deployment (December 2025)
+
+### 10.1 Deployed services
+
+| Service | URL | Image | Port |
+|---------|-----|-------|------|
+| Triplit Server | https://triplit.instantgis.cloud | `aspencloud/triplit-server:latest` | 8080 |
+| Triplit Console | https://triplit-console.instantgis.cloud | `adespaignet/triplit-console:latest` | 80 |
+
+### 10.2 Docker Compose configuration
+
+`yaml
+triplit-server:
+  image: aspencloud/triplit-server:latest
+  environment:
+    - JWT_SECRET=${TRIPLIT_JWT_SECRET}
+    - EXTERNAL_JWT_SECRET=${TRIPLIT_EXTERNAL_JWT_SECRET}
+    - LOCAL_DATABASE_URL=/data/triplit.db
+  volumes:
+    - triplit_data:/data
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthcheck"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+
+triplit-console:
+  image: adespaignet/triplit-console:latest
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+`
+
+### 10.3 JWT configuration
+
+| Env Var | Purpose | Source |
+|---------|---------|--------|
+| `TRIPLIT_JWT_SECRET` | Internal tokens (console, CLI, service) | Generate random secret |
+| `TRIPLIT_EXTERNAL_JWT_SECRET` | Verify Supabase JWTs | Copy from Supabase Settings > API > JWT Secret |
+
+### 10.4 DNS records (Hostinger hPanel)
+
+| Name | Type | Value |
+|------|------|-------|
+| `triplit` | A | 31.97.128.161 |
+| `triplit-console` | A | 31.97.128.161 |
+
+### 10.5 Console connection
+
+1. Open https://triplit-console.instantgis.cloud
+2. Click "Connect to a new server"
+3. Enter service token (signed with TRIPLIT_JWT_SECRET)
+4. Server URL: `https://triplit.instantgis.cloud`
+5. Connection saved in browser localStorage
+
+### 10.6 Generate service token
+
+`javascript
+// Node.js one-liner to generate service token
+const crypto = require('crypto');
+const secret = process.env.TRIPLIT_JWT_SECRET;
+const header = { alg: 'HS256', typ: 'JWT' };
+const payload = { 'x-triplit-token-type': 'secret', 'x-triplit-project-id': 'local' };
+const base64url = (s) => Buffer.from(s).toString('base64').replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
+const h = base64url(JSON.stringify(header));
+const p = base64url(JSON.stringify(payload));
+const sig = crypto.createHmac('sha256', secret).update(h+'.'+p).digest('base64').replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
+console.log(h + '.' + p + '.' + sig);
+`
+
+### 10.7 Console image build
+
+The console image is built from the `instantgis/triplit` fork via GitHub Actions:
+
+- Workflow: `.github/workflows/build-and-push-console.yml`
+- Pushes to: `adespaignet/triplit-console:latest`
+- Dockerfile builds dependencies in correct order: logger ? types ? db ? client ? react ? console
