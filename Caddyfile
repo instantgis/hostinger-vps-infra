@@ -39,7 +39,7 @@ supabase.instantgis.cloud {
 # Supabase Studio - protected with basic auth
 studio.instantgis.cloud {
     basic_auth {
-        supabase GENERATE_ON_VPS
+        supabase $2a$14$B.TYWYOS2RVP5wai1xbmY.cgbcdAOXwQVtKP/Hf3CI6JZOBNh.14e
     }
     reverse_proxy supabase-studio:3000
     encode gzip zstd
@@ -78,4 +78,5 @@ rules.instantgis.cloud {
 instantgis.cloud {
     respond "AutoLift is running on instantgis.cloud" 200
 }
+
 
