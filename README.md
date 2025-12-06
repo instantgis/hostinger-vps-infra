@@ -1,4 +1,4 @@
-# `hostinger-vps-infra` Repo – Specification (Draft)
+﻿# `hostinger-vps-infra` Repo – Specification (Draft)
 
 Purpose: describe what the **`C:\projects\hostinger-vps-infra`** repo should contain so it can fully own the Hostinger VPS stack for **instantgis.cloud** while reusing patterns from this repo.
 
@@ -132,3 +132,132 @@ Once these phases are complete, this doc can be mirrored into the `hostinger-vps
   - `triplit.instantgis.cloud` → `reverse_proxy triplit-server:PORT` must allow WebSocket upgrades to pass through.
   - `triplit-console.instantgis.cloud` → `reverse_proxy triplit-console:80` serves the console SPA that talks to that WebSocket endpoint.
 - When implementing this repo, ensure there is a documented smoke test (console or CLI) for `wss://triplit.instantgis.cloud` so regressions are caught early.
+
+## 8. Deployment & environment flow for `instantgis.cloud`
+
+### 8.1 Application images (code repo → Docker Hub → VPS)
+
+**Source repo:** `autoliftdb`.
+
+On every push to `main` that touches the relevant folders, these GitHub Actions run:
+
+- `.github/workflows/build-api-image.yml` → builds & pushes `adespaignet/autolift-api`.
+- `.github/workflows/build-frontend-vps.yml` → builds & pushes `adespaignet/autolift-booking`.
+- `.github/workflows/build-rules-admin.yml` → builds & pushes `adespaignet/autolift-rules-admin`.
+
+On the Hostinger VPS, the `watchtower` service in `docker-compose.yml` watches these images:
+
+- When a new `latest` (or SHA) tag appears on Docker Hub, Watchtower pulls the image and restarts the corresponding container.
+- Result: for normal API / frontend / rules-admin changes you simply `git push origin main` in **autoliftdb** and wait for Watchtower to roll the containers. No manual `docker compose` on the VPS is required.
+
+### 8.2 Infra repo (this repo) → VPS
+
+**Source repo:** `hostinger-vps-infra` (this repo).
+
+This repo owns the *topology* for the Hostinger VPS:
+
+- `docker-compose.yml` – which services run and which images they use.
+- `caddy/Caddyfile` – how subdomains map to containers.
+- `.env` on the server – runtime secrets and URLs for the AutoLift stack.
+
+Typical lifecycle on the VPS:
+
+1. Clone this repo once, e.g. to `/opt/hostinger-vps-infra`.
+2. Copy `.env.example` → `.env` **on the VPS only** and fill in the real values.
+3. Start/refresh the stack:
+   - `docker compose pull`   # optional: pull newer base images
+   - `docker compose up -d`  # (re)create containers with the current config
+
+You only need to update this repo (and re-run `docker compose up -d`) when you change **infrastructure**, e.g.:
+
+- Add/remove services (SAG/Triplit, extra tools).
+- Change domains, ports, or networks.
+- Change how env vars are wired into containers.
+
+Day-to-day application deploys still flow through `autoliftdb` → Docker Hub → Watchtower as described above.
+
+### 8.3 Secrets & environment files
+
+There are three relevant layers:
+
+1. **Master deployment config (big picture, includes Supabase)**
+
+   - File: `docker/deploy/configs/instantgis.cloud.env` in the **autoliftdb** repo.
+   - Content: everything for this domain – VPS_HOST, DOMAIN, SMTP settings, Supabase secrets, JWT keys, QR/Webhook secrets, Logflare tokens, etc.
+   - Role: this is the "one file to rule them all" used by `docker/deploy/deploy.sh` together with the `*.template` files to generate:
+     - `output/instantgis.cloud/Caddyfile`
+     - `output/instantgis.cloud/supabase.env`
+     - `output/instantgis.cloud/autolift-api.env`
+
+2. **Runtime env for AutoLift stack (this repo, on the VPS)**
+
+   - In this repo we keep a **non-secret** shape file: `.env.example`.
+   - On the VPS, in the same folder as `docker-compose.yml`, you create a real `.env` file with:
+     - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`
+     - `PUBLIC_SUPABASE_URL`, `API_BASE_URL`
+     - `QR_TOKEN_SECRET`, `WEBHOOK_SECRET`
+     - `EMAIL_PROVIDER`, `MATOBA_*` SMTP settings
+     - `SENTRY_DSN` (optional)
+   - This `.env` is effectively the same information that `autolift-api.env.template` would produce when combined with `instantgis.cloud.env`, but we store it **only on the VPS**, not in Git.
+
+3. **Supabase stack env (separate Supabase Docker repo)**
+
+   - Supabase uses its own `supabase.env` (previously generated from `supabase.env.template` + `instantgis.cloud.env`).
+   - That env file also lives on the VPS and is not committed here; this repo only assumes there is an external `supabase_default` network and that `kong:8000` is reachable from the `api` service.
+
+#### Where does `configs/instantgis.cloud.env` fit now?
+
+- We **do not** copy `docker/deploy/configs/instantgis.cloud.env` into this repo, even though it is private, because it contains the full set of production secrets.
+- Instead:
+  - Treat `instantgis.cloud.env` as your master config, stored in **autoliftdb** and in your password manager or other secure storage.
+  - Use it (plus the `docker/deploy` scripts) whenever you need to regenerate `supabase.env` or the values that go into this repo's `.env`.
+  - Keep this repo focused on **topology + non-secret examples**, with real secrets supplied only via `.env` on the VPS.
+
+This separation keeps `hostinger-vps-infra` easy to reason about ("what runs where") while avoiding a second copy of your full production secret bundle.
+
+## 9. Mapping `instantgis.cloud.env` -> `.env` (AutoLift stack)
+
+For the **home VPS on `instantgis.cloud`**, the master config file lives in the
+`autoliftdb` repo at:
+
+- `docker/deploy/configs/instantgis.cloud.env`
+
+This file was originally generated by `generate-secrets.sh` and then edited with
+customer-specific values (SMTP, domain, etc.). The `.env` file in this repo is
+what the AutoLift API + frontends actually read at runtime.
+
+When you are filling `.env` for this repo (on kvm4), use the following mapping:
+
+| `.env` key                  | Source in `instantgis.cloud.env` | Notes |
+|----------------------------|-----------------------------------|-------|
+| `SUPABASE_URL`             | _fixed_                          | Use `http://kong:8000` (internal Supabase URL on `supabase_default` network). |
+| `SUPABASE_SERVICE_ROLE_KEY`| `SERVICE_ROLE_KEY`               | Copy value verbatim. |
+| `SUPABASE_ANON_KEY`        | `ANON_KEY`                       | Copy value verbatim. |
+| `PUBLIC_SUPABASE_URL`      | `DOMAIN`                         | Use `https://supabase.{DOMAIN}` → for `instantgis.cloud`: `https://supabase.instantgis.cloud`. |
+| `API_BASE_URL`             | `DOMAIN`                         | Use `https://api.{DOMAIN}` → for `instantgis.cloud`: `https://api.instantgis.cloud`. |
+| `QR_TOKEN_SECRET`          | `QR_TOKEN_SECRET`                | Copy value verbatim. |
+| `WEBHOOK_SECRET`           | `WEBHOOK_SECRET`                 | Copy value verbatim. |
+| `EMAIL_PROVIDER`           | _fixed_                          | For Matoba SMTP keep `matoba`. |
+| `MATOBA_HOST`              | `SMTP_HOST`                      | Copy value verbatim. |
+| `MATOBA_PORT`              | `SMTP_PORT`                      | Copy value verbatim. |
+| `MATOBA_SECURE`            | `SMTP_SECURE`                    | Copy value verbatim (`true`/`false`). |
+| `MATOBA_USER`              | `SMTP_USER`                      | Copy value verbatim. |
+| `MATOBA_PASSWORD`          | `SMTP_PASS`                      | Copy value verbatim. |
+| `SENTRY_DSN`               | `SENTRY_DSN`                     | Optional; copy value or leave empty to disable. |
+
+In other words:
+
+- **All crypto and JWT-related values** (`ANON_KEY`, `SERVICE_ROLE_KEY`,
+  `QR_TOKEN_SECRET`, `WEBHOOK_SECRET`) must be copied directly from the
+  existing `instantgis.cloud.env` file and **never regenerated** for this
+  environment.
+- **SMTP and Sentry settings** are copied from the same file so that email and
+  error tracking continue to work exactly as before.
+- The default values in `.env.example` already match `DOMAIN=instantgis.cloud`;
+  for a different domain you would adjust the `PUBLIC_SUPABASE_URL` and
+  `API_BASE_URL` patterns accordingly.
+
+When in doubt, open both files side by side (`instantgis.cloud.env` and `.env`)
+and use this table as a checklist: every non-`CHANGE_ME_*` value in `.env` must
+come from this mapping.
+
