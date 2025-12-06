@@ -1,4 +1,4 @@
-# Caddy reverse proxy configuration for AutoLift
+﻿# Caddy reverse proxy configuration for AutoLift
 # Auto-generated from template - DO NOT EDIT MANUALLY
 # Domain: instantgis.cloud
 
@@ -76,6 +76,6 @@ rules.instantgis.cloud {
 
 # Root domain health check
 instantgis.cloud {
-    respond "AutoLift is running on instantgis.cloud" 200
+    respond "AutoLift is running on instantgis.cloud (via infra repo)" 200
 }
 
