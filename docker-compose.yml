@@ -1,0 +1,118 @@
+# AutoLift API Stack
+# Caddy (reverse proxy + auto-SSL) + Fastify API + Watchtower (auto-deploy)
+#
+# Deployment Flow:
+#   1. Push to main → GitHub Actions builds image → Docker Hub
+#   2. Watchtower detects new image → pulls and restarts API container
+#
+# Prerequisites:
+#   - Supabase stack running (docker/supabase) - creates supabase_default network
+#   - Caddyfile in same directory with reverse proxy config
+#   - .env file with credentials (see .env.example)
+
+services:
+  # Caddy - Reverse proxy with automatic HTTPS
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      - default
+      - supabase_default
+    depends_on:
+      - api
+
+  # AutoLift Fastify API
+  api:
+    image: adespaignet/autolift-api:latest
+    restart: unless-stopped
+    expose:
+      - "3000"
+    networks:
+      - default
+      - supabase_default
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Supabase connection (via supabase_default network → kong:8000)
+      - API_SUPABASE_URL=${SUPABASE_URL}
+      - API_SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - API_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      # QR Token secret
+      - QR_TOKEN_SECRET=${QR_TOKEN_SECRET}
+      # Email configuration
+      - EMAIL_PROVIDER=${EMAIL_PROVIDER:-matoba}
+      - MATOBA_HOST=${MATOBA_HOST}
+      - MATOBA_PORT=${MATOBA_PORT}
+      - MATOBA_SECURE=${MATOBA_SECURE}
+      - MATOBA_USER=${MATOBA_USER}
+      - MATOBA_PASSWORD=${MATOBA_PASSWORD}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Frontend - Angular app for VPS demo site
+  booking:
+    image: adespaignet/autolift-booking:latest
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - default
+    environment:
+      # Runtime config injection - used by docker-entrypoint.sh to generate env-config.js
+      # These are PUBLIC URLs (browser requests), not internal Docker network URLs
+      - SUPABASE_URL=${PUBLIC_SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - API_BASE_URL=${API_BASE_URL}
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Rules Admin - React app for GoRules management
+  rules-admin:
+    image: adespaignet/autolift-rules-admin:latest
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - default
+    environment:
+      # Runtime config injection - used by docker-entrypoint.sh to generate env-config.js
+      # These are PUBLIC URLs (browser requests), not internal Docker network URLs
+      - SUPABASE_URL=${PUBLIC_SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Watchtower - Auto-pull new images from Docker Hub
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DOCKER_API_VERSION=1.44           # Match VPS Docker version
+      - WATCHTOWER_CLEANUP=true           # Remove old images
+      - WATCHTOWER_POLL_INTERVAL=300      # Check every 5 minutes
+      - WATCHTOWER_LABEL_ENABLE=true      # Only update labeled containers
+    command: --interval 300
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  supabase_default:
+    external: true
+
