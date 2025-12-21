@@ -9,6 +9,14 @@
 #   - Supabase stack running (docker/supabase) - creates supabase_default network
 #   - Caddyfile in same directory with reverse proxy config
 #   - .env file with credentials (see .env.example)
+#
+# Profiles:
+#   - Default (no profile): AutoLift core services only
+#   - triplit: Adds Triplit server + console (optional, for dev VPS)
+#
+# Usage:
+#   docker compose up -d                      # AutoLift only (customer VPS)
+#   docker compose --profile triplit up -d    # AutoLift + Triplit (your VPS)
 
 services:
   # Caddy - Reverse proxy with automatic HTTPS
@@ -27,7 +35,6 @@ services:
       - supabase_default
     depends_on:
       - api
-      - triplit-server
 
   # AutoLift Fastify API
   api:
@@ -99,9 +106,12 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
 
   # Triplit Server - Real-time sync database (for casela-audiofence)
+  # Optional: only runs with --profile triplit
   triplit-server:
     image: aspencloud/triplit-server:latest
     restart: unless-stopped
+    profiles:
+      - triplit
     expose:
       - "8080"
     networks:
@@ -122,10 +132,13 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
 
   # Triplit Console - Admin UI for Triplit (custom build)
+  # Optional: only runs with --profile triplit
   # See docs/infrastructure/TRIPLIT-DEPLOYMENT.md for build instructions
   triplit-console:
     image: adespaignet/triplit-console:latest
     restart: unless-stopped
+    profiles:
+      - triplit
     expose:
       - "80"
     networks:

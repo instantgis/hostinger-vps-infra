@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Build Installer",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${workspaceFolder}/install/build-installer.ps1",
+      "cwd": "${workspaceFolder}/install"
+    }
+  ]
+}
+

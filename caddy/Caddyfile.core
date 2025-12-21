@@ -1,9 +1,9 @@
 # Caddy reverse proxy configuration for AutoLift
-# Auto-generated from template - DO NOT EDIT MANUALLY
-# Domain: instantgis.cloud
+# Core services - always deployed
+# Domain: {{DOMAIN}}
 
 # API subdomain - Fastify API
-api.instantgis.cloud {
+api.{{DOMAIN}} {
     encode gzip zstd
     header {
         -Server
@@ -16,12 +16,12 @@ api.instantgis.cloud {
         Access-Control-Expose-Headers "Content-Range, Range-Unit"
     }
     @supabase path /rest/* /auth/* /storage/* /realtime/* /functions/* /analytics/* /pg/*
-    redir @supabase https://supabase.instantgis.cloud{uri} 308
+    redir @supabase https://supabase.{{DOMAIN}}{uri} 308
     reverse_proxy api:3000
 }
 
 # Supabase public API (Kong gateway)
-supabase.instantgis.cloud {
+supabase.{{DOMAIN}} {
     encode gzip zstd
     header {
         -Server
@@ -37,7 +37,7 @@ supabase.instantgis.cloud {
 }
 
 # Supabase Studio - protected with basic auth
-studio.instantgis.cloud {
+studio.{{DOMAIN}} {
     basic_auth {
         {{DASHBOARD_USERNAME}} {{DASHBOARD_PASSWORD_HASH}}
     }
@@ -51,7 +51,7 @@ studio.instantgis.cloud {
 }
 
 # Frontend - Angular booking app
-booking.instantgis.cloud {
+booking.{{DOMAIN}} {
     reverse_proxy booking:80
     encode gzip zstd
     header {
@@ -63,7 +63,7 @@ booking.instantgis.cloud {
 }
 
 # Rules Admin - React app for GoRules management
-rules.instantgis.cloud {
+rules.{{DOMAIN}} {
     reverse_proxy rules-admin:80
     encode gzip zstd
     header {
@@ -75,8 +75,7 @@ rules.instantgis.cloud {
 }
 
 # Root domain health check
-instantgis.cloud {
-    respond "AutoLift is running on instantgis.cloud" 200
+{{DOMAIN}} {
+    respond "AutoLift infra via hostinger-vps-infra" 200
 }
-
 

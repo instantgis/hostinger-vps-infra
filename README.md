@@ -1,68 +1,119 @@
-# `hostinger-vps-infra` Repo – Specification (Draft)
+# `hostinger-vps-infra` Repo
 
-Purpose: describe what the **`C:\projects\hostinger-vps-infra`** repo should contain so it can fully own the Hostinger VPS stack for **instantgis.cloud** while reusing patterns from this repo.
+This repo manages the **AutoLift application layer** on the Hostinger VPS (instantgis.cloud).
+
+## Important: This is NOT the only deployment repo
+
+There are **two repos** that together manage the VPS:
+
+| Repo | What it manages | VPS location |
+|------|-----------------|--------------|
+| `autoliftdb/docker/deploy/` | Supabase stack (database, auth, storage) | `/opt/autolift/supabase/` |
+| **This repo** | AutoLift apps (API, booking, rules-admin, Caddy) | `/opt/hostinger-vps-infra/` |
+
+**Supabase must be deployed first** using `autoliftdb/docker/deploy/deploy.sh`.
+This repo connects to the existing Supabase via the `supabase_default` Docker network.
+
+See `docs/FAQ.md` for detailed explanation of how these repos relate.
 
 ## 1. Scope
 
-Home VPS on `instantgis.cloud`, running:
-- AutoLift stack (this repo)
-  - `api.instantgis.cloud` ? AutoLift API
-  - `booking.instantgis.cloud` ? booking frontend
-  - `rules.instantgis.cloud` ? rules admin
-- Audio guide stack (`C:\projects\casela-audiofence`)
-  - `sag.instantgis.cloud` ? SAG Angular app (audiofence-frontend)
-  - `triplit.instantgis.cloud` ? Triplit server
-  - `triplit-console.instantgis.cloud` ? Triplit console UI
-- Supabase stack (from separate Supabase Docker repo)
-  - `supabase.instantgis.cloud`, `studio.instantgis.cloud`, root `instantgis.cloud` healthcheck
+Home VPS on `instantgis.cloud` (IP: 31.97.128.161), running:
 
-The **infra repo** should be the single place where the *deployed* Docker Compose and Caddy config for this VPS live.
+**This repo manages:**
+- AutoLift stack (core, always deployed)
+  - `api.instantgis.cloud` - AutoLift API
+  - `booking.instantgis.cloud` - booking frontend
+  - `rules.instantgis.cloud` - rules admin
+- Triplit stack (optional, `--profile triplit`)
+  - `triplit.instantgis.cloud` - Triplit server
+  - `triplit-console.instantgis.cloud` - Triplit console UI
+- Caddy reverse proxy for all of the above + Supabase routing
+
+**Managed by autoliftdb/docker/deploy/:**
+- Supabase stack (supabase.instantgis.cloud, studio.instantgis.cloud)
+
+**Not on this VPS:**
+- `sag.instantgis.cloud` - SAG Angular app is hosted on Netlify
 
 ## 2. Proposed repo layout
 
 ```text
 hostinger-vps-infra/
   README.md                 # High-level description + usage
-  docker-compose.yml        # Full stack for instantgis.cloud
+  docker-compose.yml        # Full stack for instantgis.cloud (with profiles)
+  Caddyfile                 # Generated output (mounted into container)
   caddy/
-    Caddyfile               # All instantgis.cloud subdomains
-  env/
-    autolift-api.env        # Values consumed by api + booking + rules-admin
-    supabase.env            # Values consumed by Supabase stack (from templates)
-    sag.env                 # Values consumed by audiofence-frontend + Triplit
-  scripts/
-    ai-mcp-tools.ps1        # PowerShell module (Invoke-SagBuild, ...)
+    Caddyfile.core          # AutoLift services template (always deployed)
+    Caddyfile.triplit       # Triplit services template (optional)
+  .env.example              # Shape file for runtime secrets
   docs/
-    STACK-OVERVIEW.md       # Diagram + narrative
+    FAQ.md                  # Common questions and answers
 ```
 
 Notes:
 - The infra repo is **single-domain**: everything is for `instantgis.cloud` only.
 - Supabase Docker itself still lives in its own repo; here we only keep the **env file** used when bringing up Supabase.
+- Triplit services are **optional** via Docker Compose profiles.
 
-## 3. docker-compose.yml – contents (conceptual)
+## 3. docker-compose.yml contents
 
-`docker-compose.yml` in `hostinger-vps-infra` should define at least:
-- `caddy` – reverse proxy, ports 80/443, mounts `caddy/Caddyfile`, joins `supabase_default`.
-- `api` – from `adespaignet/autolift-api:...`, env from `env/autolift-api.env`.
-- `booking` – from `adespaignet/autolift-booking:...`.
-- `rules-admin` – from `adespaignet/autolift-rules-admin:...`.
-- `audiofence-frontend` – from SAG image (to be defined), env from `env/sag.env`.
-- `triplit-server` – from Triplit server image, env from `env/sag.env`.
-- `triplit-console` – from Triplit console image.
-- `watchtower` – same pattern as `docker/autolift-api/docker-compose.yml`.
+`docker-compose.yml` defines services with **profiles** for optional components:
 
-The external `supabase_default` network should be preserved so `api` can talk to Supabase via `kong:8000`.
+### Core services (always run)
+- `caddy` - reverse proxy, ports 80/443, mounts `./Caddyfile`, joins `supabase_default`
+- `api` - `adespaignet/autolift-api:latest`
+- `booking` - `adespaignet/autolift-booking:latest`
+- `rules-admin` - `adespaignet/autolift-rules-admin:latest`
+- `watchtower` - auto-deploys when new images are pushed
 
-## 4. Caddyfile – contents (conceptual)
+### Optional services (profile: triplit)
+- `triplit-server` - `aspencloud/triplit-server:latest`
+- `triplit-console` - `adespaignet/triplit-console:latest`
 
-`caddy/Caddyfile` in `hostinger-vps-infra` should:
-- Reuse **headers and CORS** patterns from `docker/autolift-api/Caddyfile`.
-- Replace `saggini.cloud` with `instantgis.cloud` and add:
-  - `sag.instantgis.cloud` ? `audiofence-frontend:80`
-  - `triplit.instantgis.cloud` ? `triplit-server:80`
-  - `triplit-console.instantgis.cloud` ? `triplit-console:80`
-- Keep Supabase blocks equivalent to what is generated from `docker/deploy/templates/Caddyfile.template` + `configs/instantgis.cloud.env`.
+### Usage
+
+```bash
+# AutoLift only (customer VPS)
+docker compose up -d
+
+# AutoLift + Triplit (your VPS)
+docker compose --profile triplit up -d
+```
+
+The external `supabase_default` network is preserved so `api` can talk to Supabase via `kong:8000`.
+
+## 4. Caddyfile structure
+
+The Caddyfile is built from modular snippets:
+
+| File | Purpose |
+|------|---------|
+| `caddy/Caddyfile.core` | AutoLift core services (api, booking, rules, supabase, studio) |
+| `caddy/Caddyfile.triplit` | Triplit services (optional) |
+| `Caddyfile` (root) | Generated output - mounted into container |
+
+Both snippets use `{{PLACEHOLDERS}}` for domain and credentials.
+
+### Generating the Caddyfile
+
+**AutoLift only (customer VPS):**
+```powershell
+(Get-Content caddy/Caddyfile.core) `
+    -replace '\{\{DOMAIN\}\}', 'customer.com' `
+    -replace '\{\{DASHBOARD_USERNAME\}\}', 'admin' `
+    -replace '\{\{DASHBOARD_PASSWORD_HASH\}\}', '$2a$14$...' |
+    Set-Content Caddyfile
+```
+
+**AutoLift + Triplit (your VPS):**
+```powershell
+(Get-Content caddy/Caddyfile.core, caddy/Caddyfile.triplit) `
+    -replace '\{\{DOMAIN\}\}', 'instantgis.cloud' `
+    -replace '\{\{DASHBOARD_USERNAME\}\}', 'supabase' `
+    -replace '\{\{DASHBOARD_PASSWORD_HASH\}\}', '$2a$14$...' |
+    Set-Content Caddyfile
+```
 
 ## 5. What to hoist from this repo
 
@@ -76,7 +127,7 @@ From **`docker/autolift-api/Caddyfile`**:
 - API + Supabase + Studio vhost structure.
 
 From **`docker/deploy/templates/*.template` + `configs/instantgis.cloud.env`**:
-- The canonical mapping of `{{DOMAIN}}` ? `instantgis.cloud` for:
+- The canonical mapping of `{{DOMAIN}}` - `instantgis.cloud` for:
   - `api`, `booking`, `rules`, `supabase`, `studio`, root domain healthcheck.
 - The exact env variable names used in `supabase.env` and `autolift-api.env`.
 
@@ -94,18 +145,18 @@ These should be **copied and adapted** into `hostinger-vps-infra`, with comments
 
 ### 6.2 Phased approach
 
-1. **Phase 1 – Bootstrap infra repo**
+1. **Phase 1: Bootstrap infra repo**
    - Copy/adapt the current working config (equivalent to `output/instantgis.cloud/*`) into `hostinger-vps-infra`:
      - `docker-compose.yml` for AutoLift + SAG/Triplit.
      - `caddy/Caddyfile` for all `*.instantgis.cloud` subdomains.
      - `env/*.env` matching what `docker/deploy` currently generates.
    - Keep `docker/deploy` intact but treat it as **reference**.
 
-2. **Phase 2 – Switch deployment to infra repo**
+2. **Phase 2: Switch deployment to infra repo**
    - Update deployment scripts/PowerShell (e.g. `Invoke-HostingerStackDeploy`) so the VPS is updated **only** from `hostinger-vps-infra`.
    - Verify everything on the VPS works from this repo alone.
 
-3. **Phase 3 – Deprecate `docker/deploy` for home VPS**
+3. **Phase 3: Deprecate `docker/deploy` for home VPS**
    - Mark `docker/deploy` as legacy for `instantgis.cloud` in docs.
    - Optionally remove or archive `configs/instantgis.cloud.env` and its outputs, leaving the templates as historical reference only.
 
@@ -130,52 +181,56 @@ Once these phases are complete, this doc can be mirrored into the `hostinger-vps
 - Triplit server requires **long-lived WebSocket connections plus durable storage**.
 - Prior experiments (see `TRIPLIT-SELF-HOST-NOTES.md` and the Triplit repo docs) showed that Netlify cannot satisfy this combination; hence the move to Hostinger VPS + Docker.
 - Hostinger KVM VPS with Caddy as reverse proxy is assumed to support WebSockets normally:
-  - `triplit.instantgis.cloud` ? `reverse_proxy triplit-server:PORT` must allow WebSocket upgrades to pass through.
-  - `triplit-console.instantgis.cloud` ? `reverse_proxy triplit-console:80` serves the console SPA that talks to that WebSocket endpoint.
+  - `triplit.instantgis.cloud` `reverse_proxy triplit-server:PORT` must allow WebSocket upgrades to pass through.
+  - `triplit-console.instantgis.cloud` `reverse_proxy triplit-console:80` serves the console SPA that talks to that WebSocket endpoint.
 - When implementing this repo, ensure there is a documented smoke test (console or CLI) for `wss://triplit.instantgis.cloud` so regressions are caught early.
 
 ## 8. Deployment & environment flow for `instantgis.cloud`
 
-### 8.1 Application images (code repo ? Docker Hub ? VPS)
+### 8.1 Application images (code repo to Docker Hub to VPS)
 
 **Source repo:** `autoliftdb`.
 
 On every push to `main` that touches the relevant folders, these GitHub Actions run:
 
-- `.github/workflows/build-api-image.yml` ? builds & pushes `adespaignet/autolift-api`.
-- `.github/workflows/build-frontend-vps.yml` ? builds & pushes `adespaignet/autolift-booking`.
-- `.github/workflows/build-rules-admin.yml` ? builds & pushes `adespaignet/autolift-rules-admin`.
+- `.github/workflows/build-api-image.yml` builds & pushes `adespaignet/autolift-api`.
+- `.github/workflows/build-frontend-vps.yml` builds & pushes `adespaignet/autolift-booking`.
+- `.github/workflows/build-rules-admin.yml` builds & pushes `adespaignet/autolift-rules-admin`.
 
 On the Hostinger VPS, the `watchtower` service in `docker-compose.yml` watches these images:
 
 - When a new `latest` (or SHA) tag appears on Docker Hub, Watchtower pulls the image and restarts the corresponding container.
 - Result: for normal API / frontend / rules-admin changes you simply `git push origin main` in **autoliftdb** and wait for Watchtower to roll the containers. No manual `docker compose` on the VPS is required.
 
-### 8.2 Infra repo (this repo) ? VPS
+### 8.2 Infra repo (this repo) to VPS
 
 **Source repo:** `hostinger-vps-infra` (this repo).
 
 This repo owns the *topology* for the Hostinger VPS:
 
-- `docker-compose.yml` – which services run and which images they use.
-- `caddy/Caddyfile` – how subdomains map to containers.
-- `.env` on the server – runtime secrets and URLs for the AutoLift stack.
+- `docker-compose.yml` - which services run and which images they use (with profiles)
+- `Caddyfile` - generated from `caddy/Caddyfile.core` + optional `caddy/Caddyfile.triplit`
+- `.env` on the server - runtime secrets and URLs for the AutoLift stack
 
 Typical lifecycle on the VPS:
 
 1. Clone this repo once, e.g. to `/opt/hostinger-vps-infra`.
-2. Copy `.env.example` ? `.env` **on the VPS only** and fill in the real values.
-3. Start/refresh the stack:
-   - `docker compose pull`   # optional: pull newer base images
-   - `docker compose up -d`  # (re)create containers with the current config
+2. Copy `.env.example` to `.env` **on the VPS only** and fill in the real values.
+3. Generate `Caddyfile` from templates (see Section 4).
+4. Start/refresh the stack:
+   ```bash
+   docker compose pull                        # optional: pull newer base images
+   docker compose up -d                       # AutoLift only (customer VPS)
+   docker compose --profile triplit up -d     # AutoLift + Triplit (your VPS)
+   ```
 
 You only need to update this repo (and re-run `docker compose up -d`) when you change **infrastructure**, e.g.:
 
-- Add/remove services (SAG/Triplit, extra tools).
+- Add/remove services or profiles.
 - Change domains, ports, or networks.
 - Change how env vars are wired into containers.
 
-Day-to-day application deploys still flow through `autoliftdb` ? Docker Hub ? Watchtower as described above.
+Day-to-day application deploys still flow through `autoliftdb` to Docker Hub to Watchtower as described above.
 
 ### 8.3 Secrets & environment files
 
@@ -184,7 +239,7 @@ There are three relevant layers:
 1. **Master deployment config (big picture, includes Supabase)**
 
    - File: `docker/deploy/configs/instantgis.cloud.env` in the **autoliftdb** repo.
-   - Content: everything for this domain – VPS_HOST, DOMAIN, SMTP settings, Supabase secrets, JWT keys, QR/Webhook secrets, Logflare tokens, etc.
+   - Content: everything for this domain: VPS_HOST, DOMAIN, SMTP settings, Supabase secrets, JWT keys, QR/Webhook secrets, Logflare tokens, etc.
    - Role: this is the "one file to rule them all" used by `docker/deploy/deploy.sh` together with the `*.template` files to generate:
      - `output/instantgis.cloud/Caddyfile`
      - `output/instantgis.cloud/supabase.env`
@@ -234,8 +289,8 @@ When you are filling `.env` for this repo (on kvm4), use the following mapping:
 | `SUPABASE_URL`             | _fixed_                          | Use `http://kong:8000` (internal Supabase URL on `supabase_default` network). |
 | `SUPABASE_SERVICE_ROLE_KEY`| `SERVICE_ROLE_KEY`               | Copy value verbatim. |
 | `SUPABASE_ANON_KEY`        | `ANON_KEY`                       | Copy value verbatim. |
-| `PUBLIC_SUPABASE_URL`      | `DOMAIN`                         | Use `https://supabase.{DOMAIN}` ? for `instantgis.cloud`: `https://supabase.instantgis.cloud`. |
-| `API_BASE_URL`             | `DOMAIN`                         | Use `https://api.{DOMAIN}` ? for `instantgis.cloud`: `https://api.instantgis.cloud`. |
+| `PUBLIC_SUPABASE_URL`      | `DOMAIN`                         | Use `https://supabase.{DOMAIN}` for `instantgis.cloud`: `https://supabase.instantgis.cloud`. |
+| `API_BASE_URL`             | `DOMAIN`                         | Use `https://api.{DOMAIN}` for `instantgis.cloud`: `https://api.instantgis.cloud`. |
 | `QR_TOKEN_SECRET`          | `QR_TOKEN_SECRET`                | Copy value verbatim. |
 | `WEBHOOK_SECRET`           | `WEBHOOK_SECRET`                 | Copy value verbatim. |
 | `EMAIL_PROVIDER`           | _fixed_                          | For Matoba SMTP keep `matoba`. |
@@ -264,52 +319,53 @@ come from this mapping.
 
 
 
-## 10. Triplit Deployment (December 2025)
+## 10. Triplit Deployment (Optional)
 
-### 10.1 Deployed services
+Triplit is **not part of AutoLift** - it's a convenience service for the casela-audiofence project, deployed on your personal VPS only.
+
+### 10.1 Enabling Triplit
+
+Triplit services use Docker Compose profiles:
+
+```bash
+# Deploy with Triplit (your VPS only)
+docker compose --profile triplit up -d
+```
+
+Without `--profile triplit`, these services won't start (customer deployments).
+
+### 10.2 Services
 
 | Service | URL | Image | Port |
 |---------|-----|-------|------|
 | Triplit Server | https://triplit.instantgis.cloud | `aspencloud/triplit-server:latest` | 8080 |
 | Triplit Console | https://triplit-console.instantgis.cloud | `adespaignet/triplit-console:latest` | 80 |
 
-### 10.2 Docker Compose configuration
+### 10.3 Caddyfile
 
-`yaml
-triplit-server:
-  image: aspencloud/triplit-server:latest
-  environment:
-    - JWT_SECRET=${TRIPLIT_JWT_SECRET}
-    - EXTERNAL_JWT_SECRET=${TRIPLIT_EXTERNAL_JWT_SECRET}
-    - LOCAL_DATABASE_URL=/data/triplit.db
-  volumes:
-    - triplit_data:/data
-  healthcheck:
-    test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthcheck"]
-  labels:
-    - "com.centurylinklabs.watchtower.enable=true"
+When deploying with Triplit, generate the Caddyfile from both snippets:
 
-triplit-console:
-  image: adespaignet/triplit-console:latest
-  labels:
-    - "com.centurylinklabs.watchtower.enable=true"
-`
+```powershell
+Get-Content caddy/Caddyfile.core, caddy/Caddyfile.triplit | ... | Set-Content Caddyfile
+```
 
-### 10.3 JWT configuration
+For customer deployments (no Triplit), use only `Caddyfile.core`.
+
+### 10.4 JWT configuration
 
 | Env Var | Purpose | Source |
 |---------|---------|--------|
 | `TRIPLIT_JWT_SECRET` | Internal tokens (console, CLI, service) | Generate random secret |
 | `TRIPLIT_EXTERNAL_JWT_SECRET` | Verify Supabase JWTs | Copy from Supabase Settings > API > JWT Secret |
 
-### 10.4 DNS records (Hostinger hPanel)
+### 10.5 DNS records (Hostinger hPanel)
 
 | Name | Type | Value |
 |------|------|-------|
 | `triplit` | A | 31.97.128.161 |
 | `triplit-console` | A | 31.97.128.161 |
 
-### 10.5 Console connection
+### 10.6 Console connection
 
 1. Open https://triplit-console.instantgis.cloud
 2. Click "Connect to a new server"
@@ -317,7 +373,7 @@ triplit-console:
 4. Server URL: `https://triplit.instantgis.cloud`
 5. Connection saved in browser localStorage
 
-### 10.6 Generate service token
+### 10.7 Generate service token
 
 `javascript
 // Node.js one-liner to generate service token
@@ -332,10 +388,10 @@ const sig = crypto.createHmac('sha256', secret).update(h+'.'+p).digest('base64')
 console.log(h + '.' + p + '.' + sig);
 `
 
-### 10.7 Console image build
+### 10.8 Console image build
 
 The console image is built from the `instantgis/triplit` fork via GitHub Actions:
 
 - Workflow: `.github/workflows/build-and-push-console.yml`
 - Pushes to: `adespaignet/triplit-console:latest`
-- Dockerfile builds dependencies in correct order: logger ? types ? db ? client ? react ? console
+- Dockerfile builds dependencies in correct order: logger, types, db, client, react, console
