@@ -838,3 +838,164 @@ You deploy the infrastructure; they own their secrets.
 2. **AutoLift template** in vaultKISS (defines which secrets AutoLift needs)
 3. Customer creates their own app and fills in their values
 4. Customer runs the `curl` command on their server
+
+---
+
+## How do I test the install script on my laptop using Docker Desktop?
+
+You can't run the full install script on your laptop - it's designed for a fresh Ubuntu VPS. But you can test individual pieces:
+
+### What works locally
+
+| Component | Test locally? | How |
+|-----------|---------------|-----|
+| vaultKISS API calls | Yes | `curl` to fetch secrets/install script |
+| Docker Compose syntax | Yes | `docker compose config` validates the YAML |
+| Individual containers | Yes | Run services one by one |
+| Full stack | **No** | Requires Linux, ports 80/443, real domain |
+
+### Testing the docker-compose.yml
+
+```powershell
+# Validate syntax
+docker compose config
+
+# Start just the API (without Caddy/SSL)
+docker compose up api -d
+
+# Check logs
+docker compose logs api
+```
+
+### Testing Caddy config
+
+```powershell
+# Validate Caddyfile syntax
+docker run --rm -v ${PWD}/Caddyfile:/etc/caddy/Caddyfile caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+```
+
+### Why not full local testing?
+
+1. **Caddy needs real domain** for ACME certificates (Let's Encrypt)
+2. **Ports 80/443** may conflict with local services
+3. **Supabase stack** is 14 containers - heavy for a laptop
+4. **Network topology** differs between Docker Desktop and Linux
+
+### Testing options
+
+**Option 1: Cheap test VPS** ($5/month on Hostinger/DigitalOcean). Spin up, run install script, verify, destroy.
+
+**Option 2: Refurbished laptop + Cloudflare Tunnel** (free):
+1. Install Ubuntu on an old laptop
+2. Install Cloudflare Tunnel (`cloudflared`)
+3. Point your test domain to the tunnel
+4. Run the install script - Caddy gets real certs, everything works
+
+Cloudflare Tunnel handles the port forwarding and SSL termination, so you don't need public IPs or router config. Free tier is sufficient for testing.
+
+---
+
+## What is Dockge? Why /opt/stacks/?
+
+**Dockge** is a self-hosted Docker Compose manager with a web UI. It expects stacks in `/opt/stacks/<stack-name>/`.
+
+The install script now uses the Dockge-compatible structure:
+
+```
+/opt/stacks/
+├── supabase/
+│   ├── docker-compose.yml
+│   └── .env
+├── autolift/
+│   ├── docker-compose.yml
+│   ├── Caddyfile
+│   └── .env
+```
+
+### Why this structure?
+
+- **Dockge compatibility** - Customer can install Dockge and immediately see their stacks
+- **Web UI** for start/stop/logs/update without SSH
+- **Each stack isolated** in its own folder
+- **Standard location** makes documentation simpler
+
+### More granular stacks?
+
+You could split even further:
+
+```
+/opt/stacks/
+├── supabase/           # Supabase (14 containers)
+├── autolift-api/       # Just the API
+├── autolift-booking/   # Just the booking frontend
+├── autolift-rules/     # Just rules-admin
+├── caddy/              # Reverse proxy
+```
+
+**Trade-offs:**
+
+| Granular | Monolithic |
+|----------|------------|
+| Can restart one service without affecting others | One `docker compose up` does everything |
+| More files to manage | Single docker-compose.yml |
+| Dockge shows each as separate stack | Dockge shows one stack with 7 services |
+| Complex networking between stacks | Services share a network naturally |
+
+**Recommendation:** Keep it as two stacks (supabase + autolift) for now. More granular stacks add complexity but give customers finer control over restarts.
+
+### Using Dockge
+
+The install script already writes to `/opt/stacks/`. To add Dockge:
+
+1. Customer installs Dockge (one-liner from their docs)
+2. Dockge auto-discovers stacks in `/opt/stacks/`
+3. Customer gets web UI at `dockge.yourdomain.com` to manage their stack
+
+Dockge is optional - stacks work fine without it via command line.
+
+---
+
+## Is there one big .env file for everything?
+
+Currently, **yes** - both stacks (Supabase and AutoLift) use the same secrets written to two `.env` files with identical content:
+
+```
+/opt/stacks/supabase/.env   # Used by Supabase docker-compose
+/opt/stacks/autolift/.env   # Used by AutoLift docker-compose
+```
+
+### Why two copies?
+
+Docker Compose loads `.env` from the **same directory** as `docker-compose.yml`. Since Supabase and AutoLift have separate compose files, each needs its own `.env`.
+
+The install script writes the same content to both:
+
+```bash
+echo "$SECRETS_RESPONSE" > "$SUPABASE_DIR/.env"
+echo "$SECRETS_RESPONSE" > "$AUTOLIFT_DIR/.env"
+```
+
+### Could we split them?
+
+Yes, vaultKISS could return different secrets per stack:
+
+| Stack | Secrets needed |
+|-------|---------------|
+| Supabase | `POSTGRES_PASSWORD`, `JWT_SECRET`, `ANON_KEY`, `SERVICE_ROLE_KEY`, etc. |
+| AutoLift | `SUPABASE_URL`, `API_SUPABASE_SERVICE_KEY`, `QR_TOKEN_SECRET`, `MATOBA_*`, etc. |
+
+Some overlap (keys), some unique to each.
+
+### Why not split now?
+
+1. **Simpler for vaultKISS** - one template, one set of secrets
+2. **No harm in extra vars** - Docker ignores env vars it doesn't use
+3. **Easier debugging** - same file everywhere
+
+### Future improvement
+
+If secrets management becomes complex, vaultKISS could support:
+- `/api/secrets?stack=supabase` - returns only Supabase vars
+- `/api/secrets?stack=autolift` - returns only AutoLift vars
+
+For now, one big .env works fine. The unused vars just sit there harmlessly.

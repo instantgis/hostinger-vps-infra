@@ -13,7 +13,7 @@
 #
 # Safety features:
 # - Refuses to run on blocked VPS IPs (existing production)
-# - Refuses to run if /opt/autolift already exists
+# - Refuses to run if /opt/stacks/autolift already exists
 # - Validates token before making any changes
 # - Dry-run mode to preview actions
 
@@ -23,7 +23,9 @@ set -e
 # CONFIGURATION
 #=============================================================================
 VAULTKISS_URL="https://vaultkiss.netlify.app"
-INSTALL_DIR="/opt/autolift"
+STACKS_DIR="/opt/stacks"
+SUPABASE_DIR="$STACKS_DIR/supabase"
+AUTOLIFT_DIR="$STACKS_DIR/autolift"
 
 # GitHub raw URLs for Supabase files (public repo)
 SUPABASE_GITHUB="https://raw.githubusercontent.com/supabase/supabase/master/docker"
@@ -41,7 +43,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Log file with timestamp - created in /tmp until INSTALL_DIR exists
+# Log file with timestamp - created in /tmp until STACKS_DIR exists
 LOG_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="/tmp/autolift-install-${LOG_TIMESTAMP}.log"
 
@@ -130,13 +132,13 @@ log "VPS identity OK (not a blocked production server)"
 #=============================================================================
 # SAFETY CHECK 2: Already installed
 #=============================================================================
-if [ -d "$INSTALL_DIR" ]; then
-    error "BLOCKED: $INSTALL_DIR already exists"
+if [ -d "$AUTOLIFT_DIR" ] || [ -d "$SUPABASE_DIR" ]; then
+    error "BLOCKED: $STACKS_DIR/autolift or $STACKS_DIR/supabase already exists"
     error "This installer is for fresh VPS deployments only."
-    error "If you want to reinstall, remove $INSTALL_DIR first."
+    error "If you want to reinstall, remove $STACKS_DIR/autolift and $STACKS_DIR/supabase first."
     exit 1
 fi
-log "Install directory check OK ($INSTALL_DIR does not exist)"
+log "Install directory check OK ($STACKS_DIR/autolift and $STACKS_DIR/supabase do not exist)"
 
 #=============================================================================
 # SAFETY CHECK 3: Validate vaultKISS token BEFORE touching anything
@@ -206,29 +208,28 @@ fi
 # STEP 2: Create installation directory
 #=============================================================================
 if [ "$DRY_RUN" = true ]; then
-    dry "Create directory: $INSTALL_DIR"
-    dry "Create directory: $INSTALL_DIR/supabase"
-    dry "Create directory: $INSTALL_DIR/api"
+    dry "Create directory: $SUPABASE_DIR"
+    dry "Create directory: $AUTOLIFT_DIR"
 else
     log "Creating directories..."
-    mkdir -p "$INSTALL_DIR/supabase"
-    mkdir -p "$INSTALL_DIR/api"
+    mkdir -p "$SUPABASE_DIR"
+    mkdir -p "$AUTOLIFT_DIR"
 fi
 
 #=============================================================================
 # STEP 3: Write secrets from vaultKISS
 #=============================================================================
 if [ "$DRY_RUN" = true ]; then
-    dry "Write secrets to $INSTALL_DIR/supabase/.env"
-    dry "Write secrets to $INSTALL_DIR/api/.env"
+    dry "Write secrets to $SUPABASE_DIR/.env"
+    dry "Write secrets to $AUTOLIFT_DIR/.env"
     echo ""
     echo "Secrets that would be written:"
     echo "$SECRETS_RESPONSE" | grep "^[A-Z]" | cut -d'=' -f1 | head -20
     echo "... (truncated)"
 else
     log "Writing secrets..."
-    echo "$SECRETS_RESPONSE" > "$INSTALL_DIR/supabase/.env"
-    echo "$SECRETS_RESPONSE" > "$INSTALL_DIR/api/.env"
+    echo "$SECRETS_RESPONSE" > "$SUPABASE_DIR/.env"
+    echo "$SECRETS_RESPONSE" > "$AUTOLIFT_DIR/.env"
     log "Secrets written to .env files"
 fi
 
@@ -253,37 +254,37 @@ else
     log "Downloading Supabase files from official repo..."
 
     # Create directory structure
-    mkdir -p "$INSTALL_DIR/supabase/volumes/api"
-    mkdir -p "$INSTALL_DIR/supabase/volumes/db/init"
-    mkdir -p "$INSTALL_DIR/supabase/volumes/logs"
-    mkdir -p "$INSTALL_DIR/supabase/volumes/pooler"
-    mkdir -p "$INSTALL_DIR/supabase/volumes/functions/hello"
-    mkdir -p "$INSTALL_DIR/supabase/volumes/functions/main"
+    mkdir -p "$SUPABASE_DIR/volumes/api"
+    mkdir -p "$SUPABASE_DIR/volumes/db/init"
+    mkdir -p "$SUPABASE_DIR/volumes/logs"
+    mkdir -p "$SUPABASE_DIR/volumes/pooler"
+    mkdir -p "$SUPABASE_DIR/volumes/functions/hello"
+    mkdir -p "$SUPABASE_DIR/volumes/functions/main"
 
     # Docker compose
-    download_file "$SUPABASE_GITHUB/docker-compose.yml" "$INSTALL_DIR/supabase/docker-compose.yml"
+    download_file "$SUPABASE_GITHUB/docker-compose.yml" "$SUPABASE_DIR/docker-compose.yml"
 
     # Kong API gateway config
-    download_file "$SUPABASE_GITHUB/volumes/api/kong.yml" "$INSTALL_DIR/supabase/volumes/api/kong.yml"
+    download_file "$SUPABASE_GITHUB/volumes/api/kong.yml" "$SUPABASE_DIR/volumes/api/kong.yml"
 
     # Logging config
-    download_file "$SUPABASE_GITHUB/volumes/logs/vector.yml" "$INSTALL_DIR/supabase/volumes/logs/vector.yml"
+    download_file "$SUPABASE_GITHUB/volumes/logs/vector.yml" "$SUPABASE_DIR/volumes/logs/vector.yml"
 
     # Connection pooler config
-    download_file "$SUPABASE_GITHUB/volumes/pooler/pooler.exs" "$INSTALL_DIR/supabase/volumes/pooler/pooler.exs"
+    download_file "$SUPABASE_GITHUB/volumes/pooler/pooler.exs" "$SUPABASE_DIR/volumes/pooler/pooler.exs"
 
     # Supabase internal DB init scripts
-    download_file "$SUPABASE_GITHUB/volumes/db/_supabase.sql" "$INSTALL_DIR/supabase/volumes/db/_supabase.sql"
-    download_file "$SUPABASE_GITHUB/volumes/db/jwt.sql" "$INSTALL_DIR/supabase/volumes/db/jwt.sql"
-    download_file "$SUPABASE_GITHUB/volumes/db/logs.sql" "$INSTALL_DIR/supabase/volumes/db/logs.sql"
-    download_file "$SUPABASE_GITHUB/volumes/db/pooler.sql" "$INSTALL_DIR/supabase/volumes/db/pooler.sql"
-    download_file "$SUPABASE_GITHUB/volumes/db/realtime.sql" "$INSTALL_DIR/supabase/volumes/db/realtime.sql"
-    download_file "$SUPABASE_GITHUB/volumes/db/roles.sql" "$INSTALL_DIR/supabase/volumes/db/roles.sql"
-    download_file "$SUPABASE_GITHUB/volumes/db/webhooks.sql" "$INSTALL_DIR/supabase/volumes/db/webhooks.sql"
+    download_file "$SUPABASE_GITHUB/volumes/db/_supabase.sql" "$SUPABASE_DIR/volumes/db/_supabase.sql"
+    download_file "$SUPABASE_GITHUB/volumes/db/jwt.sql" "$SUPABASE_DIR/volumes/db/jwt.sql"
+    download_file "$SUPABASE_GITHUB/volumes/db/logs.sql" "$SUPABASE_DIR/volumes/db/logs.sql"
+    download_file "$SUPABASE_GITHUB/volumes/db/pooler.sql" "$SUPABASE_DIR/volumes/db/pooler.sql"
+    download_file "$SUPABASE_GITHUB/volumes/db/realtime.sql" "$SUPABASE_DIR/volumes/db/realtime.sql"
+    download_file "$SUPABASE_GITHUB/volumes/db/roles.sql" "$SUPABASE_DIR/volumes/db/roles.sql"
+    download_file "$SUPABASE_GITHUB/volumes/db/webhooks.sql" "$SUPABASE_DIR/volumes/db/webhooks.sql"
 
     # Edge functions (examples)
-    download_file "$SUPABASE_GITHUB/volumes/functions/hello/index.ts" "$INSTALL_DIR/supabase/volumes/functions/hello/index.ts"
-    download_file "$SUPABASE_GITHUB/volumes/functions/main/index.ts" "$INSTALL_DIR/supabase/volumes/functions/main/index.ts"
+    download_file "$SUPABASE_GITHUB/volumes/functions/hello/index.ts" "$SUPABASE_DIR/volumes/functions/hello/index.ts"
+    download_file "$SUPABASE_GITHUB/volumes/functions/main/index.ts" "$SUPABASE_DIR/volumes/functions/main/index.ts"
 
     log "Supabase files downloaded"
 fi
@@ -295,10 +296,10 @@ fi
 # STEP 6: Write AutoLift docker-compose.yml (embedded by build-installer.ps1)
 #=============================================================================
 if [ "$DRY_RUN" = true ]; then
-    dry "Write embedded docker-compose.yml to $INSTALL_DIR/api/"
+    dry "Write embedded docker-compose.yml to $AUTOLIFT_DIR/"
 else
     log "Writing AutoLift docker-compose.yml..."
-    cat > "$INSTALL_DIR/api/docker-compose.yml" << 'COMPOSE_EOF'
+    cat > "$AUTOLIFT_DIR/docker-compose.yml" << 'COMPOSE_EOF'
 {{DOCKER_COMPOSE_CONTENT}}
 COMPOSE_EOF
     log "docker-compose.yml written"
@@ -322,7 +323,7 @@ else
 
     # Write Caddyfile - variables like ${DOMAIN} are expanded by bash
     # The template below is embedded by build-installer.ps1 from caddy/Caddyfile.core
-    cat > "$INSTALL_DIR/api/Caddyfile" << CADDY_EOF
+    cat > "$AUTOLIFT_DIR/Caddyfile" << CADDY_EOF
 {{CADDYFILE_CONTENT}}
 CADDY_EOF
     log "Caddyfile generated"
@@ -332,10 +333,10 @@ fi
 # STEP 8: Start Supabase stack
 #=============================================================================
 if [ "$DRY_RUN" = true ]; then
-    dry "cd $INSTALL_DIR/supabase && docker compose up -d"
+    dry "cd $SUPABASE_DIR && docker compose up -d"
 else
     log "Starting Supabase stack (14 containers)..."
-    cd "$INSTALL_DIR/supabase"
+    cd "$SUPABASE_DIR"
     docker compose up -d
 
     log "Waiting for Supabase to be healthy..."
@@ -388,10 +389,10 @@ fi
 # STEP 9: Start AutoLift stack
 #=============================================================================
 if [ "$DRY_RUN" = true ]; then
-    dry "cd $INSTALL_DIR/api && docker compose up -d"
+    dry "cd $AUTOLIFT_DIR && docker compose up -d"
 else
     log "Starting AutoLift stack..."
-    cd "$INSTALL_DIR/api"
+    cd "$AUTOLIFT_DIR"
     docker compose up -d
 
     log "Waiting for services to start..."
@@ -449,10 +450,11 @@ else
     echo "  Supabase:       https://supabase.$DOMAIN"
     echo "  Studio:         https://studio.$DOMAIN"
     echo ""
-    echo "  Installation directory: $INSTALL_DIR"
+    echo "  Supabase stack: $SUPABASE_DIR"
+    echo "  AutoLift stack: $AUTOLIFT_DIR"
     echo ""
-    # Move log file to install directory
-    FINAL_LOG="$INSTALL_DIR/install-${LOG_TIMESTAMP}.log"
+    # Move log file to autolift directory
+    FINAL_LOG="$AUTOLIFT_DIR/install-${LOG_TIMESTAMP}.log"
     mv "$LOG_FILE" "$FINAL_LOG"
     echo "  Log file: $FINAL_LOG"
 fi
