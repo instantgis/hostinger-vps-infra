@@ -4,79 +4,108 @@
 
 # API subdomain - Fastify API
 api.instantgis.cloud {
-    encode gzip zstd
-    header {
-        -Server
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Frame-Options "DENY"
-        X-Content-Type-Options "nosniff"
-        Access-Control-Allow-Origin "*"
-        Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        Access-Control-Allow-Headers "Authorization, Content-Type, apikey, X-Client-Info, X-Requested-With, sentry-trace, baggage, Range, Accept-Profile, Content-Profile, Prefer, Content-Length"
-        Access-Control-Expose-Headers "Content-Range, Range-Unit"
-    }
-    @supabase path /rest/* /auth/* /storage/* /realtime/* /functions/* /analytics/* /pg/*
-    redir @supabase https://supabase.instantgis.cloud{uri} 308
-    reverse_proxy api:3000
+	encode gzip zstd
+	# Allow only localhost dev and the booking/rules frontends to call the API from the browser
+	@api_cors {
+		header_regexp Origin ^http://localhost:4200$|^https://booking\.instantgis.cloud$|^https://rules\.instantgis.cloud$
+	}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+	}
+	header @api_cors {
+		Access-Control-Allow-Origin "{http.request.header.Origin}"
+		Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+		Access-Control-Allow-Headers "Authorization, Content-Type, apikey, X-Client-Info, X-Requested-With, sentry-trace, baggage, Range, Accept-Profile, Content-Profile, Prefer, Content-Length"
+		Access-Control-Expose-Headers "Content-Range, Range-Unit"
+	}
+	@supabase path /rest/* /auth/* /storage/* /realtime/* /functions/* /analytics/* /pg/*
+	redir @supabase https://supabase.instantgis.cloud{uri} 308
+	reverse_proxy api:3000 {
+		# Strip Fastify's CORS headers from the response
+		header_down -Access-Control-Allow-Origin
+		header_down -Access-Control-Allow-Methods
+		header_down -Access-Control-Allow-Headers
+		header_down -Access-Control-Allow-Credentials
+		header_down -Access-Control-Allow-Expose-Headers
+	}
 }
 
 # Supabase public API (Kong gateway)
 supabase.instantgis.cloud {
-    encode gzip zstd
-    header {
-        -Server
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Frame-Options "DENY"
-        X-Content-Type-Options "nosniff"
-        Access-Control-Allow-Origin "*"
-        Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        Access-Control-Allow-Headers "Authorization, Content-Type, apikey, X-Client-Info, X-Requested-With, sentry-trace, baggage, Range, Accept-Profile, Content-Profile, Prefer, Content-Length, x-supabase-api-version"
-        Access-Control-Expose-Headers "Content-Range, Range-Unit, X-Supabase-Api-Version"
-    }
-    reverse_proxy kong:8000
+	encode gzip zstd
+	# Allow only localhost dev and the booking/rules frontends to call Supabase from the browser
+	@supabase_cors {
+		header_regexp Origin ^http://localhost:4200$|^https://booking\.instantgis.cloud$|^https://rules\.instantgis.cloud$|^https://drawkiss\.netlify\.app$
+	}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+	}
+	header @supabase_cors {
+		Access-Control-Allow-Origin "{http.request.header.Origin}"
+		Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+		Access-Control-Allow-Headers "Authorization, Content-Type, apikey, X-Client-Info, X-Requested-With, sentry-trace, baggage, Range, Accept-Profile, Content-Profile, Prefer, Content-Length, x-supabase-api-version, x-upsert"
+		Access-Control-Expose-Headers "Content-Range, Range-Unit, X-Supabase-Api-Version"
+	}
+	reverse_proxy kong:8000 {
+		# Strip Kong's CORS headers from the response
+		header_down -Access-Control-Allow-Origin
+		header_down -Access-Control-Allow-Methods
+		header_down -Access-Control-Allow-Headers
+		header_down -Access-Control-Allow-Credentials
+		header_down -Access-Control-Expose-Headers
+	}
 }
 
 # Supabase Studio - protected with basic auth
 studio.instantgis.cloud {
-    basic_auth {
-        supabase $2a$14$B.TYWYOS2RVP5wai1xbmY.cgbcdAOXwQVtKP/Hf3CI6JZOBNh.14e
-    }
-    reverse_proxy supabase-studio:3000
-    encode gzip zstd
-    header {
-        -Server
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-    }
+	basic_auth {
+		supabase $2a$14$B.TYWYOS2RVP5wai1xbmY.cgbcdAOXwQVtKP/Hf3CI6JZOBNh.14e
+	}
+	reverse_proxy supabase-studio:3000
+	encode gzip zstd
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+	}
 }
 
 # Frontend - Angular booking app
 booking.instantgis.cloud {
-    reverse_proxy booking:80
-    encode gzip zstd
-    header {
-        -Server
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Frame-Options "SAMEORIGIN"
-        X-Content-Type-Options "nosniff"
-    }
+	reverse_proxy booking:80
+	encode gzip zstd
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+	}
 }
 
 # Rules Admin - React app for GoRules management
 rules.instantgis.cloud {
-    reverse_proxy rules-admin:80
-    encode gzip zstd
-    header {
-        -Server
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Frame-Options "SAMEORIGIN"
-        X-Content-Type-Options "nosniff"
-    }
+	reverse_proxy rules-admin:80
+	encode gzip zstd
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+	}
 }
 
 # Root domain health check
+instantgis.cloud {
+	respond "AutoLift is running on instantgis.cloud" 200
+}
 
-# Triplit Server - Real-time sync database
+# Triplit Server - Real-time sync database (Simple Audio Guide)
 triplit.instantgis.cloud {
     reverse_proxy triplit-server:8080
     encode gzip zstd
@@ -99,10 +128,3 @@ triplit-console.instantgis.cloud {
         X-Content-Type-Options "nosniff"
     }
 }
-
-instantgis.cloud {
-    respond "AutoLift infra via hostinger-vps-infra" 200
-}
-
-
-
